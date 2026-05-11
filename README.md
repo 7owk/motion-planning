@@ -2,8 +2,6 @@
 
 基于贝塞尔多项式的轨迹优化运动规划，前端 A* 搜索 + 后端运动走廊膨胀 + QP 最小 jerk 优化。
 
-原项目 `hourenyu/Trajectory-optimization-based-on-Bezier-polynomial-motion-planning-` 的 ROS 2 Humble 移植版。
-
 ---
 
 ## 环境要求
@@ -105,6 +103,7 @@ Summary: 1 package finished [XXs]
 ```bash
 source install/setup.bash
 ros2 launch btraj test.launch.py
+# LIBGL_ALWAYS_SOFTWARE=1 ros2 launch btraj test.launch.py
 ```
 
 启动后终端会输出各节点日志，同时弹出 rviz2 窗口，显示 50×50 的栅格地图。
@@ -176,12 +175,28 @@ motion-planning/
 │   │   ├── astar.cpp           # A* 节点 main
 │   │   ├── Asearch.cpp         # A* 搜索实现
 │   │   ├── b_traj.cpp          # 走廊膨胀 + QP 轨迹优化
+│   │   ├── traj_follower.cpp   # 轨迹跟踪控制器（订阅轨迹，发布速度命令）
 │   │   └── tf_br.cpp           # 静态 TF 发布 (map→odom)
 │   ├── launch/
-│   │   └── test.launch.py      # ROS 2 启动文件
+│   │   └── test.launch.py      # ROS 2 启动文件（集成 Gazebo + RViz）
+│   ├── worlds/
+│   │   └── maze.world          # Gazebo 仿真世界文件
+│   ├── urdf/
+│   │   └── robot.urdf.xacro    # 机器人 URDF 描述
 │   ├── maps/
 │   │   ├── map.yaml            # 地图配置
-│   │   └── map_maze.png        # 50×50 栅格地图
+│   │   ├── map.pgm             # 地图图像文件
+│   │   ├── map_maze.png        # 50×50 栅格地图
+│   │   ├── map_basic.png       # 基础测试地图
+│   │   ├── map_large.png       # 大型地图
+│   │   ├── map_empty.png       # 空地图
+│   │   ├── map_demo.png        # 演示地图
+│   │   ├── map_dead_end.png    # 死胡同地图
+│   │   ├── map_slalom.png      # 绕桩地图
+│   │   ├── map_parking.png     # 停车场地图
+│   │   ├── map_parking_lot.png # 停车场地图（大）
+│   │   ├── map_small.png       # 小型地图
+│   │   └── road.png            # 道路地图
 │   └── rviz/
 │       └── rviz.rviz           # rviz2 配置
 ├── src/                        # colcon 工作空间目录（编译时创建）
@@ -212,6 +227,16 @@ ros2 param list /b_traj
 ros2 run btraj astar
 ros2 run btraj b_traj
 ros2 run btraj tf_br
+ros2 run btraj traj_follower
+
+# 查看轨迹话题
+ros2 topic echo /traj_path
+
+# 查看速度命令
+ros2 topic echo /cmd_vel
+
+# 查看机器人里程计
+ros2 topic echo /odom
 ```
 
 ---
@@ -235,3 +260,87 @@ ros2 run btraj tf_br
                 ↓
         输出平滑轨迹
 ```
+
+---
+
+## 十、Gazebo 仿真集成
+
+本项目已集成 Gazebo 仿真环境，支持在虚拟世界中测试轨迹规划和跟踪功能。
+
+### 功能特点
+
+- **Gazebo 世界**：`Btraj/worlds/maze.world` 提供迷宫仿真环境
+- **机器人模型**：`Btraj/urdf/robot.urdf.xacro` 定义差速驱动机器人
+- **轨迹跟踪**：`traj_follower` 节点实现简单的轨迹跟踪控制器
+- **完整仿真**：`test.launch.py` 一键启动 Gazebo + RViz + 所有节点
+
+### 仿真流程
+
+1. 启动仿真环境：
+   ```bash
+   source install/setup.bash
+   ros2 launch btraj test.launch.py
+   ```
+
+2. Gazebo 会自动加载迷宫世界并在 (5.0, 5.0, 0.1) 位置生成机器人
+
+3. 在 RViz 中设置起点和终点后，系统会：
+   - A* 搜索生成路径
+   - Bezier 优化生成平滑轨迹
+   - `traj_follower` 订阅轨迹并发布 `/cmd_vel` 控制机器人移动
+
+### 轨迹跟踪器参数
+
+`traj_follower` 节点实现了简单的 Pure Pursuit 控制器：
+
+- **订阅话题**：
+  - `/traj_path` (nav_msgs/Path)：优化后的轨迹
+  - `/odom` (nav_msgs/Odometry)：机器人里程计
+
+- **发布话题**：
+  - `/cmd_vel` (geometry_msgs/Twist)：速度控制命令
+
+- **控制参数**：
+  - 线速度：最大 0.4 m/s
+  - 角速度增益：1.5
+  - 到达阈值：0.3 m
+
+### 自定义地图
+
+如需使用自定义地图：
+
+1. 将 PNG 格式地图放入 `Btraj/maps/` 目录
+2. 创建对应的 YAML 配置文件（参考 `map.yaml`）
+3. 修改 `test.launch.py` 中的 `map` 参数
+
+---
+
+## 十一、算法细节
+
+### A* 搜索
+
+- 使用障碍物距离启发式函数
+- 支持对角线移动
+- 考虑障碍物距离代价（离障碍物越近代价越高）
+
+### Bezier 轨迹优化
+
+- 使用 6 阶 Bezier 多项式
+- 目标函数：最小化 jerk（加加速度的积分）
+- 约束条件：
+  - 起点和终点的位置、速度、加速度
+  - 运动走廊边界约束
+  - 速度和加速度限幅
+- 求解器：qpOASES（开源 QP 求解器）
+
+### 运动走廊生成
+
+- 沿 A* 路径膨胀障碍物
+- 自动合并重叠区域
+- 简化走廊数量以减少计算量
+
+---
+
+## 十二、致谢
+
+- 原项目：[hourenyu/Trajectory-optimization-based-on-Bezier-polynomial-motion-planning-](https://github.com/hourenyu/Trajectory-optimization-based-on-Bezier-

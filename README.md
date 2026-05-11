@@ -41,6 +41,12 @@ sudo apt install -y libeigen3-dev
 
 # rviz2 可视化
 sudo apt install -y ros-humble-rviz2
+
+# Gazebo 仿真（用于机器人仿真）
+sudo apt install -y ros-humble-gazebo-ros ros-humble-gazebo-plugins
+
+# xacro（URDF 处理）
+sudo apt install -y ros-humble-xacro
 ```
 
 ---
